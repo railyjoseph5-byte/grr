@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Food Hall — Cash Pre-Order & Vendor Queue</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 960px;
+      margin: 24px auto;
+      padding: 0 16px;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+      align-items: start;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 10px;
+      margin-bottom: 4px;
+    }
+    input, select, button {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      font-size: 14px;
+    }
+    button {
+      background: #0f172a;
+      color: #ffffff;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+    button:hover {
+      background: #1e293b;
+    }
+    button.secondary {
+      background: #047857;
+      margin-top: 0;
+    }
+    button.secondary:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .order-item {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: #f8fafc;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+    .unpaid {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .paid {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .actions select, .actions button {
+      margin-top: 0;
+    }
+    #status-banner {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #334155;
+    }
+  </style>
+</head>
+<body>
+  <h1>Campus Food Hall — Cash Basis Queue</h1>
+  <p>Student cash pre-order checkout and live vendor queue dashboard powered by Supabase.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Student Cash Order</h2>
+      <form id="cash-order-form">
+        <label for="student-name">Student Name</label>
+        <input id="student-name" name="studentName" required placeholder="Juan Dela Cruz" />
+
+        <label for="student-id">Student ID</label>
+        <input id="student-id" name="studentId" required placeholder="2026-00142" />
+
+        <label for="stall-id">Stall UUID</label>
+        <input id="stall-id" name="stallId" required placeholder="Paste stall UUID from Supabase" />
+
+        <label for="menu-item-id">Menu Item UUID</label>
+        <input id="menu-item-id" name="menuItemId" required placeholder="Paste menu_item UUID" />
+
+        <label for="item-name">Item Name</label>
+        <input id="item-name" name="itemName" required value="Chicken Adobo Rice" />
+
+        <label for="item-price">Unit Price (₱)</label>
+        <input id="item-price" name="itemPrice" type="number" step="0.01" min="0" required value="75.00" />
+
+        <label for="item-qty">Quantity</label>
+        <input id="item-qty" name="itemQty" type="number" min="1" required value="1" />
+
+        <button type="submit">Place Cash-on-Pickup Order</button>
+      </form>
+      <div id="status-banner"></div>
+    </section>
+
+    <section class="card">
+      <h2>Vendor Kitchen & Cash Counter</h2>
+      <div id="vendor-orders">Loading orders...</div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const supabase = createClient(
+      'https://YOUR_PROJECT_REF.supabase.co',
+      'YOUR_SUPABASE_ANON_KEY'
+    );
+
+    export async function createCashOrder({ stallId, studentName, studentId, cartItems }) {
+      const totalAmount = cartItems.reduce(
+        (sum, item) => sum + Number(item.price) * Number(item.quantity),
+        0
+      );
+      const queueNumber = `A-${Math.floor(100 + Math.random() * 900)}`;
+
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .insert({
+          queue_number: queueNumber,
+          stall_id: stallId,
+          student_name: studentName,
+          student_id: studentId,
+          total_amount: totalAmount,
+          payment_method: 'CASH_ON_PICKUP',
+          payment_status: 'UNPAID',
+          order_status: 'PENDING',
+        })
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+
+      const lineItems = cartItems.map((item) => ({
+        order_id: order.id,
+        menu_item_id: item.id,
+        item_name: item.name,
+        unit_price: item.price,
+        quantity: item.quantity,
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert(lineItems);
+
+      if (itemsError) throw itemsError;
+
+      return order;
+    }
+
+    export async function markCashCollected(orderId) {
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ payment_status: 'PAID' })
+        .eq('id', orderId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    export async function updateOrderStatus(orderId, nextStatus) {
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ order_status: nextStatus })
+        .eq('id', orderId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    export async function fetchOrdersWithItems() {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data;
+    }
+
+    export function subscribeToOrders(onChange) {
+      const channel = supabase
+        .channel('canteen-orders-live')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders' },
+          async (payload) => {
+            const latestOrders = await fetchOrdersWithItems();
+            onChange(latestOrders, payload);
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+
+    const formEl = document.getElementById('cash-order-form');
+    const bannerEl = document.getElementById('status-banner');
+    const ordersContainerEl = document.getElementById('vendor-orders');
+
+    function renderOrders(orders) {
+      if (!orders.length) {
+        ordersContainerEl.innerHTML = '<p>No orders yet.</p>';
+        return;
+      }
+
+      ordersContainerEl.innerHTML = orders
+        .map((order) => {
+          const isPaid = order.payment_status === 'PAID';
+          const itemsSummary = (order.order_items || [])
+            .map((i) => `${i.quantity}x ${i.item_name}`)
+            .join(', ');
+
+          return `
+            <div class="order-item" data-order-id="${order.id}">
+              <div>
+                <strong>Queue ${order.queue_number}</strong> — ${order.student_name} (${order.student_id})
+              </div>
+              <div style="margin: 6px 0;">
+                <span class="badge ${isPaid ? 'paid' : 'unpaid'}">
+                  ${isPaid ? 'PAID CASH' : 'UNPAID - CASH DUE'}
+                </span>
+                <span class="badge" style="background:#e2e8f0;color:#0f172a;">
+                  ${order.order_status}
+                </span>
+                <strong>₱${Number(order.total_amount).toFixed(2)}</strong>
+              </div>
+              <div style="font-size: 13px; color: #475569;">${itemsSummary}</div>
+              <div class="actions">
+                <button
+                  type="button"
+                  class="secondary collect-cash-btn"
+                  data-id="${order.id}"
+                  ${isPaid ? 'disabled' : ''}
+                >
+                  ${isPaid ? 'Cash Collected' : 'Collect Cash'}
+                </button>
+                <select class="status-select" data-id="${order.id}">
+                  ${['PENDING', 'PREPARING', 'READY', 'COMPLETED', 'CANCELLED']
+                    .map(
+                      (st) =>
+                        `<option value="${st}" ${order.order_status === st ? 'selected' : ''}>${st}</option>`
+                    )
+                    .join('')}
+                </select>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
+    async function refreshOrders() {
+      try {
+        const orders = await fetchOrdersWithItems();
+        renderOrders(orders);
+      } catch (err) {
+        ordersContainerEl.innerHTML = `<p style="color:#b91c1c;">Failed to load orders: ${err.message}</p>`;
+      }
+    }
+
+    formEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      bannerEl.textContent = 'Submitting cash order...';
+
+      const data = new FormData(formEl);
+      try {
+        const created = await createCashOrder({
+          stallId: data.get('stallId').trim(),
+          studentName: data.get('studentName').trim(),
+          studentId: data.get('studentId').trim(),
+          cartItems: [
+            {
+              id: data.get('menuItemId').trim(),
+              name: data.get('itemName').trim(),
+              price: Number(data.get('itemPrice')),
+              quantity: Number(data.get('itemQty')),
+            },
+          ],
+        });
+
+        bannerEl.textContent = `Order created! Queue #${created.queue_number} is UNPAID — pay ₱${Number(created.total_amount).toFixed(2)} at counter.`;
+        formEl.reset();
+        await refreshOrders();
+      } catch (err) {
+        bannerEl.textContent = `Error creating order: ${err.message}`;
+      }
+    });
+
+    ordersContainerEl.addEventListener('click', async (event) => {
+      const btn = event.target.closest('.collect-cash-btn');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        await markCashCollected(btn.dataset.id);
+        await refreshOrders();
+      } catch (err) {
+        btn.disabled = false;
+        alert(`Could not mark cash collected: ${err.message}`);
+      }
+    });
+
+    ordersContainerEl.addEventListener('change', async (event) => {
+      const select = event.target.closest('.status-select');
+      if (!select) return;
+      try {
+        await updateOrderStatus(select.dataset.id, select.value);
+        await refreshOrders();
+      } catch (err) {
+        alert(`Could not update order status: ${err.message}`);
+      }
+    });
+
+    await refreshOrders();
+    const unsubscribe = subscribeToOrders((latestOrders) => {
+      renderOrders(latestOrders);
+    });
+
+    window.addEventListener('beforeunload', () => {
+      unsubscribe();
+    });
+  </script>
+</body>
+</html>
